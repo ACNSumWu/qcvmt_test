@@ -30,6 +30,13 @@ public class GlobalExceptionHandler {
         .body(ApiResponse.fail("n4_connection_error"));
   }
 
+  @ExceptionHandler(N4QueryException.class)
+  public ResponseEntity<ApiResponse<Void>> handleN4QueryException(N4QueryException ex) {
+    log.error("N4 query failed", ex);
+    return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+        .body(ApiResponse.fail("n4_query_error"));
+  }
+
   @ExceptionHandler(AccessDeniedException.class)
   public ResponseEntity<ApiResponse<Void>> handleAccessDeniedException(AccessDeniedException ex) {
     return ResponseEntity.status(HttpStatus.FORBIDDEN)

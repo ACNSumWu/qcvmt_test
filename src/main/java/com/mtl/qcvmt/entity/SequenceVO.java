@@ -16,6 +16,7 @@ public class SequenceVO {
   private String qrow;
   private String status;
   private String bay;
+  private String timeMove;
   private boolean isOog;
   private boolean isPowered;
   private boolean isTank;

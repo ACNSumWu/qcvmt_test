@@ -9,4 +9,6 @@ public interface CellMatrixRepository extends JpaRepository<CellMatrix, Integer>
   List<CellMatrix> findByTypeAndActiveOrderByIdDesc(String type, String active);
 
   List<CellMatrix> findByTypeAndRowBetweenOrderByRowAsc(String type, String rowStart, String rowEnd);
+
+  List<CellMatrix> findByTypeAndRowBetweenOrderByIdDesc(String type, String rowStart, String rowEnd);
 }

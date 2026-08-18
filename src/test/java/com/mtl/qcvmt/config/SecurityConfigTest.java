@@ -9,9 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.mtl.qcvmt.controller.TerminalController;
 import com.mtl.qcvmt.controller.UserController;
 import com.mtl.qcvmt.dto.colorset.ColorSetResponse;
+import com.mtl.qcvmt.dto.response.BayCellResponse;
 import com.mtl.qcvmt.dto.response.WorkQueueResult;
 import com.mtl.qcvmt.dto.vessel.VesselResponse;
-import com.mtl.qcvmt.entity.CellMatrix;
 import com.mtl.qcvmt.entity.SequenceVO;
 import com.mtl.qcvmt.entity.User;
 import com.mtl.qcvmt.service.ColorSetService;
@@ -22,6 +22,7 @@ import com.mtl.qcvmt.service.n4.N4ContainerQueryService;
 import com.mtl.qcvmt.service.n4.N4FacilityQueryService;
 import com.mtl.qcvmt.service.n4.N4VesselQueryService;
 import com.mtl.qcvmt.service.n4.N4WorkQueueService;
+import com.mtl.qcvmt.service.n4.TerminalBayPlanService;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Disabled;
@@ -63,6 +64,8 @@ class SecurityConfigTest {
 
   @MockBean
   private N4FacilityQueryService n4FacilityQueryService;
+  @MockBean
+  private TerminalBayPlanService terminalBayPlanService;
 
   @MockBean
   private VesselService vesselService;
@@ -108,10 +111,19 @@ class SecurityConfigTest {
     WorkQueueResult queue = new WorkQueueResult("LOAD", "QO-1", "V123456", "17", "19", "A", List.of(sequence));
     when(n4WorkQueueService.getCurrentWorkQueue("QC01")).thenReturn(queue);
 
-    when(n4VesselQueryService.getCellMatrix(anyString(), anyString(), anyString()))
-        .thenReturn(List.of(new CellMatrix(1, "A", "01", "19", "82", "90", "1")));
-    when(n4ContainerQueryService.getROBList(anyString(), anyString())).thenReturn(List.of());
-    when(n4ContainerQueryService.getROBListByBay(anyString(), anyString())).thenReturn(List.of());
+    when(n4VesselQueryService.getBayCells(anyString(), anyString(), anyString()))
+        .thenReturn(List.of(BayCellResponse.empty("01", "82")));
+    when(n4ContainerQueryService.getROBList(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(List.of());
+    when(terminalBayPlanService.render(
+        org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.any(),
+        org.mockito.ArgumentMatchers.any(),
+        anyString(),
+        anyString(),
+        org.mockito.ArgumentMatchers.any()))
+        .thenReturn(List.of(BayCellResponse.empty("01", "82")));
     when(vesselService.list())
         .thenReturn(List.of(new VesselResponse(1, "V123456", "A", "17", "01", "19", "82", "90", 0)));
     when(colorSetService.list())

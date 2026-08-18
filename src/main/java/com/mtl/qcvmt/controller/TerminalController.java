@@ -1,11 +1,11 @@
 package com.mtl.qcvmt.controller;
 
 import com.mtl.qcvmt.dto.common.ApiResponse;
+import com.mtl.qcvmt.dto.response.BayCellResponse;
 import com.mtl.qcvmt.dto.response.RobContainer;
 import com.mtl.qcvmt.dto.response.TerminalView;
 import com.mtl.qcvmt.dto.response.WorkQueueResult;
 import com.mtl.qcvmt.dto.vessel.VesselResponse;
-import com.mtl.qcvmt.entity.CellMatrix;
 import com.mtl.qcvmt.entity.SequenceVO;
 import com.mtl.qcvmt.entity.User;
 import com.mtl.qcvmt.exception.BusinessException;
@@ -17,6 +17,8 @@ import com.mtl.qcvmt.service.n4.N4ContainerQueryService;
 import com.mtl.qcvmt.service.n4.N4FacilityQueryService;
 import com.mtl.qcvmt.service.n4.N4VesselQueryService;
 import com.mtl.qcvmt.service.n4.N4WorkQueueService;
+import com.mtl.qcvmt.service.n4.TerminalBayPlanService;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Predicate;
@@ -39,6 +41,7 @@ public class TerminalController {
   private final N4ContainerQueryService n4ContainerQueryService;
   private final N4VesselQueryService n4VesselQueryService;
   private final N4FacilityQueryService n4FacilityQueryService;
+  private final TerminalBayPlanService terminalBayPlanService;
   private final VesselService vesselService;
   private final ColorSetService colorSetService;
   private final boolean allowEmptyQueue;
@@ -49,6 +52,7 @@ public class TerminalController {
       N4ContainerQueryService n4ContainerQueryService,
       N4VesselQueryService n4VesselQueryService,
       N4FacilityQueryService n4FacilityQueryService,
+      TerminalBayPlanService terminalBayPlanService,
       VesselService vesselService,
       ColorSetService colorSetService,
       @Value("${qcvmt.terminal.allow-empty-queue:false}") boolean allowEmptyQueue) {
@@ -57,6 +61,7 @@ public class TerminalController {
     this.n4ContainerQueryService = n4ContainerQueryService;
     this.n4VesselQueryService = n4VesselQueryService;
     this.n4FacilityQueryService = n4FacilityQueryService;
+    this.terminalBayPlanService = terminalBayPlanService;
     this.vesselService = vesselService;
     this.colorSetService = colorSetService;
     this.allowEmptyQueue = allowEmptyQueue;
@@ -80,24 +85,38 @@ public class TerminalController {
     String deckHold = coalesce(workQueue.deckHold(), firstDeckHold(workQueue.sequences()));
     String bay = coalesce(workQueue.minBay(), firstBay(workQueue.sequences()));
     List<VesselResponse> matchedVessels = resolveTerminalVessels(vesselId);
+    String layoutVesselId = matchedVessels.stream()
+        .findFirst()
+        .map(VesselResponse::vesselId)
+        .orElse(vesselId);
 
-    List<CellMatrix> cellMatrix = n4VesselQueryService.getCellMatrix(vesselId, bay, deckHold);
-
-    List<RobContainer> robContainers = n4ContainerQueryService.getROBList(vesselId, bay);
-    if (robContainers.isEmpty() && workQueue.maxBay() != null) {
-      robContainers = n4ContainerQueryService.getROBListByBay(vesselId, workQueue.maxBay());
-    }
+    List<BayCellResponse> layout =
+        n4VesselQueryService.getBayCells(layoutVesselId, bay, deckHold);
+    List<RobContainer> robContainers = n4ContainerQueryService.getROBList(
+        vesselId, bay, workQueue.maxBay(), workQueue.qType());
+    List<RobContainer> twentyContainers =
+        shouldLoadTwentyContainers(workQueue, bay)
+            ? n4ContainerQueryService.getTwentyUnitList(vesselId, bay)
+            : Collections.emptyList();
 
     if (robContainers.isEmpty()) {
       robContainers = Collections.emptyList();
     }
+    List<BayCellResponse> cells = terminalBayPlanService.render(
+        layout,
+        workQueue,
+        robContainers,
+        twentyContainers,
+        vesselId,
+        deckHold,
+        participatingBays(bay, workQueue.maxBay()));
 
     TerminalView response = new TerminalView(
         matchedVessels,
         workQueue,
         colorSetService.list(),
         robContainers,
-        cellMatrix,
+        cells,
         vesselId,
         coalesce(bay, workQueue.maxBay()),
         coalesce(deckHold, "A"),
@@ -111,6 +130,7 @@ public class TerminalController {
         countBy(workQueue.sequences(), SequenceVO::isTwin),
         countBy(workQueue.sequences(), SequenceVO::isTandem),
         countBy(workQueue.sequences(), SequenceVO::isQuad),
+        terminalBayPlanService.isRefueling(vesselId),
         queueStatus(workQueue));
 
     return ApiResponse.ok("qcid=" + effectiveQcid + "; user=" + currentUser.getUsername(), response);
@@ -201,5 +221,29 @@ public class TerminalController {
 
   private String queueStatus(WorkQueueResult workQueue) {
     return isQueueEmpty(workQueue) ? "EMPTY" : "READY";
+  }
+
+  private boolean shouldLoadTwentyContainers(WorkQueueResult workQueue, String bay) {
+    if (!"DISCH".equalsIgnoreCase(workQueue.qType())
+        || bay == null
+        || !bay.equals(workQueue.maxBay())) {
+      return false;
+    }
+    try {
+      return Integer.parseInt(bay) % 2 == 0;
+    } catch (NumberFormatException exception) {
+      return false;
+    }
+  }
+
+  private List<String> participatingBays(String minBay, String maxBay) {
+    List<String> bays = new ArrayList<>();
+    if (minBay != null && !minBay.isBlank()) {
+      bays.add(minBay);
+    }
+    if (maxBay != null && !maxBay.isBlank() && !maxBay.equals(minBay)) {
+      bays.add(maxBay);
+    }
+    return bays;
   }
 }

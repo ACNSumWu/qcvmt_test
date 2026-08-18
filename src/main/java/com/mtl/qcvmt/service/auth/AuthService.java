@@ -105,13 +105,13 @@ public class AuthService {
         admin);
 
     Instant loginTime = Instant.now();
-    writeLoginLog(syncResult.user(), loginTime);
+    writeLoginLog(syncResult.user(), request.qcid(), loginTime);
 
     AuthMeResponse me = new AuthMeResponse(
         syncResult.user().getId(),
         syncResult.user().getKeycloakId(),
         syncResult.user().getUsername(),
-        syncResult.user().getQcid(),
+        request.qcid(),
         syncResult.user().getRole(),
         roles,
         admin,
@@ -137,7 +137,7 @@ public class AuthService {
   public AuthSyncResponse sync() {
     KeycloakUserSyncService.SyncResult syncResult = keycloakUserSyncService.syncCurrentUser();
     Instant loginTime = Instant.now();
-    writeLoginLog(syncResult.user(), loginTime);
+    writeLoginLog(syncResult.user(), syncResult.user().getQcid(), loginTime);
     AuthMeResponse me = toMeResponse(syncResult.user(), currentJwt(), currentAuthorities());
     return new AuthSyncResponse(me, syncResult.created(), loginTime);
   }
@@ -185,12 +185,12 @@ public class AuthService {
         currentAuthorities());
   }
 
-  private void writeLoginLog(User user, Instant loginTime) {
+  private void writeLoginLog(User user, String qcid, Instant loginTime) {
     try {
       ShowLog showLog = new ShowLog();
       showLog.setUserId(user.getId());
       showLog.setUsername(user.getUsername());
-      showLog.setQcid(user.getQcid());
+      showLog.setQcid(qcid);
       showLog.setLoginTime(LocalDateTime.ofInstant(loginTime, ZoneOffset.UTC));
       showLog.setOperation("LOGIN");
       showLogRepository.save(showLog);

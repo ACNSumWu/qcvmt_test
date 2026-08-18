@@ -4,8 +4,10 @@ import com.mtl.qcvmt.dto.response.RobContainer;
 import com.mtl.qcvmt.n4.N4QueryRepository;
 import com.mtl.qcvmt.n4.N4TableConstants;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -17,31 +19,56 @@ public class N4ContainerQueryService {
     this.n4QueryRepository = n4QueryRepository;
   }
 
-  public List<RobContainer> getROBList(String vesselId, String minBay) {
-    if (vesselId == null || vesselId.isBlank()) {
+  public List<RobContainer> getROBList(
+      String vesselId, String minBay, String maxBay, String qType) {
+    if (vesselId == null || vesselId.isBlank() || minBay == null || minBay.isBlank()) {
       return Collections.emptyList();
     }
-    String sql = "SELECT iufv.flex_string01 AS bay, iufv.last_pos_slot AS slot, iu.id AS container_id "
-        + "FROM " + N4TableConstants.INV_UNIT_FCY_VISIT + " iufv "
-        + "JOIN " + N4TableConstants.INV_UNIT + " iu ON iufv.unit_gkey = iu.gkey "
-        + "JOIN " + N4TableConstants.ARGO_CARRIER_VISIT
-        + " acv ON acv.gkey IN (iufv.actual_ib_cv, iufv.actual_ob_cv, iufv.intend_ob_cv) "
-        + "WHERE acv.id = ? AND SUBSTR(iufv.flex_string01, 1, 2) >= ? AND iufv.last_pos_loctype = 'VESSEL'";
-    List<Map<String, Object>> rows = n4QueryRepository.queryForList(sql, vesselId, minBay == null ? "00" : minBay);
-    return rows.stream().map(this::toRobContainer).toList();
+    String effectiveMaxBay = maxBay == null || maxBay.isBlank() ? minBay : maxBay;
+    Map<String, RobContainer> result = new LinkedHashMap<>();
+    addAll(result, queryRobByBay(vesselId, minBay, qType));
+    if (!minBay.equals(effectiveMaxBay)) {
+      addAll(result, queryRobByBay(vesselId, effectiveMaxBay, qType));
+    }
+
+    if ("LOAD".equalsIgnoreCase(qType)) {
+      int bay = Integer.parseInt(minBay);
+      String previous = formatBay(bay - 1);
+      String next = formatBay(bay + 1);
+      if (bay % 2 == 0) {
+        Map<String, RobContainer> previousCells = byCoordinate(queryRobByBay(vesselId, previous, qType));
+        Map<String, RobContainer> nextCells = byCoordinate(queryRobByBay(vesselId, next, qType));
+        previousCells.forEach((coordinate, container) -> {
+          if (nextCells.containsKey(coordinate)) {
+            result.putIfAbsent(coordinate, container);
+          }
+        });
+      } else {
+        addAll(result, queryRobByBay(vesselId, previous, qType));
+        addAll(result, queryRobByBay(vesselId, next, qType));
+      }
+    }
+    return List.copyOf(result.values());
   }
 
-  public List<RobContainer> getROBListByBay(String vesselId, String bay) {
+  public List<RobContainer> getTwentyUnitList(String vesselId, String bay) {
     if (vesselId == null || vesselId.isBlank() || bay == null || bay.isBlank()) {
       return Collections.emptyList();
     }
-    String sql = "SELECT iufv.flex_string01 AS bay, iufv.last_pos_slot AS slot, iu.id AS container_id "
+    int bayNumber = Integer.parseInt(bay);
+    String sql = "SELECT SUBSTR(iufv.last_pos_slot, 1, 2) AS bay, "
+        + "iufv.last_pos_slot AS slot, iu.id AS container_id "
         + "FROM " + N4TableConstants.INV_UNIT_FCY_VISIT + " iufv "
         + "JOIN " + N4TableConstants.INV_UNIT + " iu ON iufv.unit_gkey = iu.gkey "
         + "JOIN " + N4TableConstants.ARGO_CARRIER_VISIT
-        + " acv ON acv.gkey IN (iufv.actual_ib_cv, iufv.actual_ob_cv, iufv.intend_ob_cv) "
-        + "WHERE acv.id = ? AND iufv.flex_string01 = ? AND iufv.last_pos_loctype = 'VESSEL'";
-    List<Map<String, Object>> rows = n4QueryRepository.queryForList(sql, vesselId, bay);
+        + " acv ON (iufv.actual_ib_cv = acv.gkey OR iufv.actual_ob_cv = acv.gkey) "
+        + "WHERE acv.id = ? "
+        + "AND ((iufv.actual_ib_cv = acv.gkey AND iufv.transit_state = 'S20_INBOUND') "
+        + "OR (iufv.actual_ob_cv = acv.gkey AND iufv.transit_state = 'S60_LOADED')) "
+        + "AND SUBSTR(iufv.last_pos_slot, 1, 2) IN (?, ?) "
+        + "ORDER BY iufv.last_pos_slot";
+    List<Map<String, Object>> rows = n4QueryRepository.queryForList(
+        sql, vesselId, formatBay(bayNumber - 1), formatBay(bayNumber + 1));
     return rows.stream().map(this::toRobContainer).toList();
   }
 
@@ -54,21 +81,51 @@ public class N4ContainerQueryService {
     return null;
   }
 
-  public List<Map<String, Object>> getTwentyUnitList(String qcid, String vesselId, String bay) {
-    String sql = "SELECT iu.id, iu.category FROM " + N4TableConstants.INV_UNIT + " iu "
-        + "JOIN " + N4TableConstants.INV_UNIT_FCY_VISIT + " iufv ON iufv.unit_gkey = iu.gkey "
-        + "JOIN " + N4TableConstants.ARGO_CARRIER_VISIT
-        + " acv ON acv.gkey IN (iufv.actual_ib_cv, iufv.actual_ob_cv, iufv.intend_ob_cv) "
-        + "WHERE iu.line_op = ? AND acv.id = ? AND iufv.last_pos_slot LIKE ?";
-    return n4QueryRepository.queryForList(sql, qcid, vesselId, bay + "%");
+  private List<RobContainer> queryRobByBay(String vesselId, String bay, String qType) {
+    boolean discharge = "DISCH".equalsIgnoreCase(qType);
+    String sql = "SELECT SUBSTR(iufv.last_pos_slot, 1, 2) AS bay, "
+        + "iufv.last_pos_slot AS slot, iu.id AS container_id "
+        + "FROM " + N4TableConstants.INV_UNIT_FCY_VISIT + " iufv "
+        + "JOIN " + N4TableConstants.INV_UNIT + " iu ON iu.gkey = iufv.unit_gkey "
+        + "JOIN " + N4TableConstants.ARGO_CARRIER_VISIT + " acv ON "
+        + (discharge ? "iufv.actual_ib_cv = acv.gkey "
+            : "(iufv.actual_ib_cv = acv.gkey OR iufv.actual_ob_cv = acv.gkey) ")
+        + "WHERE acv.phase NOT IN ('60DEPARTED','70CLOSED','80CANCELED','90ARCHIVED') "
+        + "AND acv.id = ? AND SUBSTR(iufv.last_pos_slot, 1, 2) = ? "
+        + (discharge
+            ? "AND iufv.transit_state = 'S20_INBOUND' AND iu.category = 'THRGH' "
+                + "AND iufv.restow_typ = 'NONE' "
+            : "AND ((iufv.actual_ib_cv = acv.gkey AND iufv.transit_state = 'S20_INBOUND') "
+                + "OR (iufv.actual_ob_cv = acv.gkey AND iufv.transit_state = 'S60_LOADED')) ")
+        + "ORDER BY iufv.last_pos_slot";
+    return n4QueryRepository.queryForList(sql, vesselId, formatBay(Integer.parseInt(bay))).stream()
+        .map(this::toRobContainer)
+        .toList();
+  }
+
+  private Map<String, RobContainer> byCoordinate(List<RobContainer> containers) {
+    return containers.stream().collect(Collectors.toMap(
+        container -> container.tier() + container.row(),
+        container -> container,
+        (first, ignored) -> first,
+        LinkedHashMap::new));
+  }
+
+  private void addAll(Map<String, RobContainer> target, List<RobContainer> containers) {
+    containers.forEach(container -> target.putIfAbsent(
+        container.tier() + container.row(), container));
+  }
+
+  private String formatBay(int bay) {
+    return String.format("%02d", Math.max(0, bay));
   }
 
   private RobContainer toRobContainer(Map<String, Object> row) {
     String bay = value(row.get("bay"));
     String slot = value(row.get("slot"));
     String containerId = value(row.get("container_id"));
-    String rowNo = slot != null && slot.length() >= 5 ? slot.substring(2, 4) : null;
-    String tier = slot != null && slot.length() >= 7 ? slot.substring(4, 6) : null;
+    String rowNo = slot != null && slot.length() >= 6 ? slot.substring(2, 4) : null;
+    String tier = slot != null && slot.length() >= 6 ? slot.substring(4, 6) : null;
     return new RobContainer(bay, rowNo, tier, containerId, null);
   }
 

@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qcvmt-service-deployment
+  namespace: sit
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: "RollingUpdate"
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: qcvmt-service
+  template:
+    metadata:
+      labels:
+        app: qcvmt-service
+    spec:
+      containers:
+        - name: qcvmt-service
+          image: crpi-95utyu3dlwvuyk53.cn-guangzhou.personal.cr.aliyuncs.com/lsh123/qcvmt:0.24
+          resources:
+            requests:
+              cpu: "50m"
+            limits:
+              memory: "384Mi"
+          ports:
+            - containerPort: 8080
+          env:
+            - name: "JAVA_OPTS"
+              value: "-XX:CompressedClassSpaceSize=32M -XX:MaxMetaspaceSize=64M -XX:MetaspaceSize=32M -Xmx128M -Xms128M -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/yos-files/dumps -Duser.timezone=Asia/Hong_Kong"
+            - name: "SPRING_PROFILES_ACTIVE"
+              value: "json-logging"
+            - name: MYSQL_HOST
+              value: "tech-grp.mysql.rds.aliyuncs.com"
+            - name: MYSQL_PORT
+              value: "3306"
+            - name: MYSQL_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "MYSQL_DB"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "MYSQL_USER"
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "MYSQL_PASSWORD"
+
+            - name: N4_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "N4_HOST"
+            - name: N4_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "N4_PORT"
+            - name: N4_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "N4_SERVICE"
+            - name: N4_USER
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "N4_USER"
+            - name: N4_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "N4_PASSWORD"
+
+            - name: KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "KEYCLOAK_URL"
+            - name: KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "KEYCLOAK_REALM"
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "KEYCLOAK_CLIENT_ID"
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "KEYCLOAK_CLIENT_SECRET"
+
+            - name: N4_DB_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "N4_DB_ACCOUNT"
+            - name: N4_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: "account-password"
+                  key: "N4_DB_PASSWORD"
+            - name: N4_DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: "db-conn"
+                  key: "N4_DB_URL"
+          imagePullPolicy: "IfNotPresent"
+          #imagePullPolicy: "Always"
+          readinessProbe:
+            httpGet:
+              path: "/actuator/health"
+              port: 8080
+            #initialDelaySeconds: 120
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qcvmt-service
+  namespace: sit
+spec:
+  selector:
+    app: qcvmt-service
+  ports:
+    - port: 8080
+      targetPort: 8080
